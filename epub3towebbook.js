@@ -82,7 +82,14 @@ function handleContainer()
       var buffer = fs.readFileSync('extracted/META-INF/container.xml');
 
       // parse it
-      var doc = libxmljs.parseXml(buffer.toString());
+      var doc = null;
+      try {
+        doc = libxmljs.parseXml(buffer.toString());
+      }
+      catch(e) {
+        console.log("[ERROR] Cannot parse XML file " + containerPath);
+        return;
+      }
 
       // get all rootfile elements
       var rootfileArray = doc.find('//*[local-name()="rootfile"]');
@@ -115,7 +122,15 @@ function handleOPF(aFullPathAttr)
   console.log('Found main rendition: ' + opfPath);
 
   // parse it
-  var doc = libxmljs.parseXml(buffer.toString());
+  var doc = null;
+  try {
+    doc = libxmljs.parseXml(buffer.toString());
+  }
+  catch(e) {
+    console.log("[ERROR] Cannot parse XML file " + opfPath);
+    return;
+  }
+
 
   // verify it's a 3.x EPUB package
   var root = doc.root();
@@ -145,7 +160,7 @@ function handleOPF(aFullPathAttr)
     var href = hrefAttr.value();
 
     // Early way out if there is nothing to do...
-    var finalNavPath = path.relative(path.dirname(opfPath), "./extracted/index.xhtml");
+    var finalNavPath = path.resolve(path.dirname(opfPath), "./extracted/index.xhtml");
     if (finalNavPath == href) {
       console.log('[WARNING] Nothing to do, package already has a index.xhtml file in topmost directory');
       return;
@@ -153,11 +168,19 @@ function handleOPF(aFullPathAttr)
 
     if (href[0] != ".") // sanity check for path.resolve()
       href = "./" + href;
-    handleNavigationDocument(path.resolve(path.dirname(opfPath), href));
+
+    var relPath = path.resolve(opfPath, __dirname + "/extracted/index.xhtml");
+    handleNavigationDocument(opfPath, path.resolve(path.dirname(opfPath), href), relPath);
 
     // change the path in OPF
+    finalNavPath = path.relative(path.dirname(opfPath), relPath);
     console.log('Changing navigation item to target file ' + finalNavPath);
     hrefAttr.value(finalNavPath);
+
+    // refreshing the opf file
+    buffer = doc.toString();
+    fs.writeFileSync(opfPath, buffer.toString());
+    console.log('Navigation Document modified and saved.');
   }
   else {
     console.log("[ERROR] The Navigation Document is not a XHTML document!");
@@ -166,10 +189,42 @@ function handleOPF(aFullPathAttr)
 }
 
 // Where we deal with the Navigation Document
-function handleNavigationDocument(aPath)
+function handleNavigationDocument(aOpfPath, aPath, aNewPath)
 {
   console.log('Reading Navigation Document: ' + aPath);
   var buffer = fs.readFileSync(aPath);
 
-  var doc = libxmljs.parseXml(buffer.toString());
+  var doc = null;
+  try {
+    doc = libxmljs.parseXml(buffer.toString());
+  }
+  catch(e) {
+    console.log("[ERROR] Cannot parse XML file " + opfPath);
+    return;
+  }
+
+  var change = path.resolve(aNewPath, aPath);
+
+  console.log("Fixing hyperlinks in Navigation Document");
+  var eltArray = doc.find('//*/@href|//video/@poster|//*/@src');
+  eltArray.forEach(function(e) {
+    var href = e.value();
+    if (href != "#'") { // don't modify local targets...
+      var newHref = path.relative(path.dirname(aNewPath), path.resolve(path.dirname(change), href));
+      e.value(newHref);
+    }
+  });
+
+  // now find the toc nav and add the doc-toc role
+  var tocNavElement = doc.get("//*[@xmlns:type='toc']", "http://www.idpf.org/2007/ops");
+  if (!tocNavElement) {
+    console.log("[ERROR] No toc nav element in Navigation Document!");
+    return;
+  }
+  tocNavElement.attr({"role": "doc-toc"});
+
+  // writing new file
+  buffer = doc.toString();
+  fs.writeFileSync(aNewPath, buffer.toString());
+  console.log('Navigation Document modified and saved.');
 }
