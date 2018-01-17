@@ -76,7 +76,7 @@ function handleContainer()
   var containerPath = './extracted/META-INF/container.xml';
 
   if (fs.existsSync(containerPath)) {
-      console.log('Found container.xml: ' + containerPath);
+      console.log('Reading container.xml: ' + __dirname + '/extracted/META-INF/container.xml');
 
       // read the contents of the file
       var buffer = fs.readFileSync('extracted/META-INF/container.xml');
@@ -87,7 +87,7 @@ function handleContainer()
         doc = libxmljs.parseXml(buffer.toString());
       }
       catch(e) {
-        console.log("[ERROR] Cannot parse XML file " + containerPath);
+        console.log("  [ERROR] Cannot parse XML file " + containerPath);
         return;
       }
 
@@ -102,6 +102,7 @@ function handleContainer()
           if (mediaTypeAttr && mediaTypeAttr.value() == "application/oebps-package+xml") {
               var fullPathAttr = r.attr("full-path");
               if (fullPathAttr) {
+                console.log('  Found main rendition: ' + fullPathAttr);
                 handleOPF(fullPathAttr);
 
                 // we're done here
@@ -119,7 +120,7 @@ function handleOPF(aFullPathAttr)
 
   // read the contents of the file
   var buffer = fs.readFileSync(opfPath);
-  console.log('Found main rendition: ' + opfPath);
+  console.log('Reading OPF file: ' + opfPath);
 
   // parse it
   var doc = null;
@@ -127,7 +128,7 @@ function handleOPF(aFullPathAttr)
     doc = libxmljs.parseXml(buffer.toString());
   }
   catch(e) {
-    console.log("[ERROR] Cannot parse XML file " + opfPath);
+    console.log("  [ERROR] Cannot parse XML file " + opfPath);
     return;
   }
 
@@ -138,18 +139,19 @@ function handleOPF(aFullPathAttr)
   if (!versionAttr ||
        (versionAttr.value() != "3.0" &&
         versionAttr.value() != "3.1")) {
-    console.log('[ERROR] The version of EPUB (' + versionAttr.value() + ") is incompatible with this tool");
+    console.log('  [ERROR] The version of EPUB (' + versionAttr.value() + ") is incompatible with this tool");
     return;
   }
 
   // get the item referencing the Navigation Document
   var navItem = doc.get('//*[local-name()="item"][@properties="nav"]');
   if (!navItem) {
-    console.log('[ERROR] No navigation document, nothing we can do now');
+    console.log('  [ERROR] No navigation document, nothing we can do now');
     // TODO create a navigation document from the OPF and other metadata
     return;
   }
-  console.log('Found navigation item in OPF: ' + navItem);
+  console.log('  Found navigation item in OPF:');
+  console.log('    ' + navItem);
 
   // do we have the right type of file?
   var hrefAttr = navItem.attr('href');
@@ -162,7 +164,7 @@ function handleOPF(aFullPathAttr)
     // Early way out if there is nothing to do...
     var finalNavPath = path.resolve(path.dirname(opfPath), "./extracted/index.xhtml");
     if (finalNavPath == href) {
-      console.log('[WARNING] Nothing to do, package already has a index.xhtml file in topmost directory');
+      console.log('  [WARNING] Nothing to do, package already has a index.xhtml file in topmost directory');
       return;
     }
 
@@ -170,20 +172,28 @@ function handleOPF(aFullPathAttr)
       href = "./" + href;
 
     var relPath = path.resolve(opfPath, __dirname + "/extracted/index.xhtml");
-    handleNavigationDocument(opfPath, path.resolve(path.dirname(opfPath), href), relPath);
 
     // change the path in OPF
     finalNavPath = path.relative(path.dirname(opfPath), relPath);
-    console.log('Changing navigation item to target file ' + finalNavPath);
+    console.log('  Changing navigation item to target file ' + finalNavPath);
     hrefAttr.value(finalNavPath);
 
     // refreshing the opf file
     buffer = doc.toString();
     fs.writeFileSync(opfPath, buffer.toString());
-    console.log('Navigation Document modified and saved.');
+    console.log('  OPF Document modified and saved.');
+
+    handleNavigationDocument(opfPath, path.resolve(path.dirname(opfPath), href), relPath);
+    // fix all the other documents just in case...
+    var otherItems = doc.find('//*[local-name()="item"][@media-type="application/xhtml+xml"]');
+    for (var i = 0; i < otherItems.length; i++) {
+      var item = otherItems[i];
+      if (!item.attr("properties") || item.attr("properties").value() != "nav")
+        handleContentDocument(opfPath, otherItems[i].attr("href").value(), path.resolve(path.dirname(opfPath), href), relPath);
+    }
   }
   else {
-    console.log("[ERROR] The Navigation Document is not a XHTML document!");
+    console.log("  [ERROR] The Navigation Document is not a XHTML document!");
     return;
   }
 }
@@ -199,13 +209,13 @@ function handleNavigationDocument(aOpfPath, aPath, aNewPath)
     doc = libxmljs.parseXml(buffer.toString());
   }
   catch(e) {
-    console.log("[ERROR] Cannot parse XML file " + opfPath);
+    console.log("  [ERROR] Cannot parse XML file " + opfPath);
     return;
   }
 
   var change = path.resolve(aNewPath, aPath);
 
-  console.log("Fixing hyperlinks in Navigation Document");
+  console.log("  Fixing hyperlinks in Navigation Document");
   var eltArray = doc.find('//*/@href|//video/@poster|//*/@src');
   eltArray.forEach(function(e) {
     var href = e.value();
@@ -218,7 +228,7 @@ function handleNavigationDocument(aOpfPath, aPath, aNewPath)
   // now find the toc nav and add the doc-toc role
   var tocNavElement = doc.get("//*[@xmlns:type='toc']", "http://www.idpf.org/2007/ops");
   if (!tocNavElement) {
-    console.log("[ERROR] No toc nav element in Navigation Document!");
+    console.log("  [ERROR] No toc nav element in Navigation Document!");
     return;
   }
   tocNavElement.attr({"role": "doc-toc"});
@@ -226,5 +236,42 @@ function handleNavigationDocument(aOpfPath, aPath, aNewPath)
   // writing new file
   buffer = doc.toString();
   fs.writeFileSync(aNewPath, buffer.toString());
-  console.log('Navigation Document modified and saved.');
+  console.log('  Navigation Document modified and saved.');
+}
+
+function handleContentDocument(aOpfPath, aHref, aPath, aNewPath)
+{
+  var filePath = path.resolve(path.dirname(aOpfPath), aHref);
+  console.log('Reading Content Document: ' + filePath);
+  var buffer = fs.readFileSync(filePath);
+
+  var doc = null;
+  try {
+    doc = libxmljs.parseXml(buffer.toString());
+  }
+  catch(e) {
+    console.log("  [ERROR] Cannot parse XML file " + filePath);
+    return;
+  }
+
+  var modified = false;
+
+  var eltArray = doc.find('//*/@href|//video/@poster|//*/@src');
+  var oldNavFullPath = path.resolve(path.dirname(aOpfPath), aPath)
+  eltArray.forEach(function(e) {
+    var href = e.value();
+    //console.log("  " + oldNavFullPath + "  " + path.resolve(path.dirname(path.resolve(path.dirname(aOpfPath), aHref)), href))
+    if (path.resolve(path.dirname(path.resolve(path.dirname(aOpfPath), aHref)), href) == oldNavFullPath) {
+      console.log("  Updating a hyperlink to Navigation Document: " + href);
+      e.value(path.relative(path.dirname(filePath), aNewPath));
+      modified = true;
+    }
+  });
+
+  // writing new file
+  if (modified) {
+    buffer = doc.toString();
+    fs.writeFileSync(filePath, buffer.toString());
+    console.log('  Content document modified and saved.');
+  }
 }
