@@ -64,8 +64,35 @@ zip.on('ready', () => {
         zip.close();
 
         // Without error, let's move to next step
-        if (!err)
-          handleContainer();
+        if (!err) {
+          var oldNavPath = path.relative(__dirname + "/extracted", handleContainer());
+
+          // now we need to zip again...
+          var fileName = process.argv[2];
+          var periodIndex = fileName.lastIndexOf('.');
+          var newFileName = fileName.substr(0, periodIndex)
+                            + '-webbook'
+                            + fileName.substr(periodIndex);
+
+          var zipper = new require('node-zip')();
+          zipper.file("mimetype", fs.readFileSync(path.join(__dirname, 'extracted/mimetype')));
+          var entries = zip.entries();
+          for (i in entries) {
+            var entry = entries[i];
+            var name = entry.name;
+            if (name != "mimetype") {
+              if (name != oldNavPath)
+                zipper.file(name, fs.readFileSync(path.join(__dirname, 'extracted/' + name)));
+            }
+          }
+          zipper.file("index.xhtml", fs.readFileSync(path.join(__dirname, 'extracted/index.xhtml')));
+
+          var data = zipper.generate({ base64:false });
+          fs.writeFileSync(newFileName, data, 'binary');
+
+          console.log('--------------------------------------------------------------------');
+          console.log('WebBook saved under name: ' + newFileName);
+        }
     });
 });
 
@@ -76,7 +103,7 @@ function handleContainer()
   var containerPath = './extracted/META-INF/container.xml';
 
   if (fs.existsSync(containerPath)) {
-      console.log('Reading container.xml: ' + __dirname + '/extracted/META-INF/container.xml');
+      console.log('Reading container.xml: ' + './extracted/META-INF/container.xml');
 
       // read the contents of the file
       var buffer = fs.readFileSync('extracted/META-INF/container.xml');
@@ -103,10 +130,7 @@ function handleContainer()
               var fullPathAttr = r.attr("full-path");
               if (fullPathAttr) {
                 console.log('  Found main rendition: ' + fullPathAttr);
-                handleOPF(fullPathAttr);
-
-                // we're done here
-                return;
+                return handleOPF(fullPathAttr);
               }
           }
       }
@@ -129,7 +153,7 @@ function handleOPF(aFullPathAttr)
   }
   catch(e) {
     console.log("  [ERROR] Cannot parse XML file " + opfPath);
-    return;
+    return null;
   }
 
 
@@ -140,7 +164,7 @@ function handleOPF(aFullPathAttr)
        (versionAttr.value() != "3.0" &&
         versionAttr.value() != "3.1")) {
     console.log('  [ERROR] The version of EPUB (' + versionAttr.value() + ") is incompatible with this tool");
-    return;
+    return null;
   }
 
   // get the item referencing the Navigation Document
@@ -148,7 +172,7 @@ function handleOPF(aFullPathAttr)
   if (!navItem) {
     console.log('  [ERROR] No navigation document, nothing we can do now');
     // TODO create a navigation document from the OPF and other metadata
-    return;
+    return null;
   }
   console.log('  Found navigation item in OPF:');
   console.log('    ' + navItem);
@@ -165,7 +189,7 @@ function handleOPF(aFullPathAttr)
     var finalNavPath = path.resolve(path.dirname(opfPath), "./extracted/index.xhtml");
     if (finalNavPath == href) {
       console.log('  [WARNING] Nothing to do, package already has a index.xhtml file in topmost directory');
-      return;
+      return null;
     }
 
     if (href[0] != ".") // sanity check for path.resolve()
@@ -191,10 +215,12 @@ function handleOPF(aFullPathAttr)
       if (!item.attr("properties") || item.attr("properties").value() != "nav")
         handleContentDocument(opfPath, otherItems[i].attr("href").value(), path.resolve(path.dirname(opfPath), href), relPath);
     }
+
+    return path.resolve(path.dirname(opfPath), href);
   }
   else {
     console.log("  [ERROR] The Navigation Document is not a XHTML document!");
-    return;
+    return null;
   }
 }
 
