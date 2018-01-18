@@ -286,7 +286,6 @@ function handleContentDocument(aOpfPath, aHref, aPath, aNewPath)
   var oldNavFullPath = path.resolve(path.dirname(aOpfPath), aPath)
   eltArray.forEach(function(e) {
     var href = e.value();
-    //console.log("  " + oldNavFullPath + "  " + path.resolve(path.dirname(path.resolve(path.dirname(aOpfPath), aHref)), href))
     if (path.resolve(path.dirname(path.resolve(path.dirname(aOpfPath), aHref)), href) == oldNavFullPath) {
       console.log("  Updating a hyperlink to Navigation Document: " + href);
       e.value(path.relative(path.dirname(filePath), aNewPath));
